@@ -10,8 +10,8 @@
 
 ```bash
 # Clone the repo
-git clone https://github.com/vp365ai/FieldAuditHistory.git
-cd FieldAuditHistory
+git clone https://github.com/vp365ai/field-audit-history.git
+cd field-audit-history
 
 # Install dependencies
 cd pcf
