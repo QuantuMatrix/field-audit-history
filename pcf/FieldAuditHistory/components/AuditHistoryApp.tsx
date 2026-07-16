@@ -243,7 +243,7 @@ export const AuditHistoryApp: React.FC<IAuditHistoryAppProps> = ({
                 )}
             </Stack>
 
-            {/* REACT PORTALS — render AuditIcon into each field's label */}
+            {/* REACT PORTALS — exactly one AuditIcon per field logical name */}
             {portalTargets.map((target) =>
                 document.body.contains(target.portalElement)
                     ? ReactDOM.createPortal(
@@ -256,7 +256,8 @@ export const AuditHistoryApp: React.FC<IAuditHistoryAppProps> = ({
                               tooltip={config.display.iconTooltip}
                               onClick={quickPeek.handleIconClick}
                           />,
-                          target.portalElement
+                          target.portalElement,
+                          target.fieldLogicalName
                       )
                     : null
             )}
