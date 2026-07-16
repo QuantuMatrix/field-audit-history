@@ -1,6 +1,12 @@
 // IConfig.ts — Configuration interfaces and defaults
 
 /**
+ * Logical name of the solution-shipped config web resource.
+ * Loaded automatically when the PCF "Config Web Resource" property is blank.
+ */
+export const DEFAULT_CONFIG_WEB_RESOURCE = "vp365_AuditHistoryConfig";
+
+/**
  * Per-table field visibility configuration.
  * Controls which fields on a specific table get audit history icons.
  */

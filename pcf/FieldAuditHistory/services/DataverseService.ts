@@ -450,53 +450,242 @@ export class DataverseService {
     }
 
     /**
+     * Normalizes a config web resource logical name for lookup.
+     * Trims whitespace and strips a trailing .js / .json extension.
+     */
+    static normalizeConfigWebResourceName(name: string): string {
+        const trimmed = (name ?? "").trim();
+        if (!trimmed) {
+            return "";
+        }
+        return trimmed.replace(/\.(js|json)$/i, "");
+    }
+
+    /**
+     * Strips // line comments and block comments so braces inside
+     * documentation comments cannot hijack JSON extraction.
+     * Not a full JS parser — config values should not rely on // inside strings.
+     */
+    static stripJsComments(text: string): string {
+        return text
+            .replace(/\/\*[\s\S]*?\*\//g, "")
+            .replace(/^\s*\/\/.*$/gm, "");
+    }
+
+    /**
+     * Finds the JSON object substring: prefers `var config = {` / `config = {`,
+     * then falls back to the first `{`. Uses brace-depth matching so trailing
+     * junk after the object does not get included.
+     */
+    static extractConfigJsonObject(text: string): string | null {
+        const cleaned = DataverseService.stripJsComments(text);
+        const assignMatch = /(?:var\s+)?config\s*=\s*\{/i.exec(cleaned);
+        const startIdx = assignMatch
+            ? assignMatch.index + assignMatch[0].length - 1
+            : cleaned.indexOf("{");
+
+        if (startIdx === -1) {
+            return null;
+        }
+
+        let depth = 0;
+        let inString = false;
+        let escape = false;
+        for (let i = startIdx; i < cleaned.length; i++) {
+            const ch = cleaned[i];
+            if (inString) {
+                if (escape) {
+                    escape = false;
+                } else if (ch === "\\") {
+                    escape = true;
+                } else if (ch === '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (ch === '"') {
+                inString = true;
+                continue;
+            }
+            if (ch === "{") {
+                depth++;
+            } else if (ch === "}") {
+                depth--;
+                if (depth === 0) {
+                    return cleaned.substring(startIdx, i + 1);
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Extracts and JSON.parses the config object from web resource text.
+     * Accepts pure JSON or a JS wrapper like: var config = { ... };
+     * Strips comments first so example braces in headers do not break parsing.
+     * Never evaluates JavaScript (security: config is data only).
+     */
+    static parseConfigText(text: string): Record<string, unknown> | null {
+        const jsonStr = DataverseService.extractConfigJsonObject(text);
+
+        if (!jsonStr) {
+            console.warn(
+                "[FieldAuditHistory] Config web resource has no JSON object; using defaults."
+            );
+            return null;
+        }
+
+        try {
+            return JSON.parse(jsonStr) as Record<string, unknown>;
+        } catch (err) {
+            const preview =
+                jsonStr.length > 100 ? `${jsonStr.slice(0, 100)}…` : jsonStr;
+            console.warn(
+                "[FieldAuditHistory] Config JSON parse failed; using defaults. " +
+                    "Keys must be double-quoted (valid JSON), not bare JavaScript object keys. " +
+                    `Preview: ${preview}`,
+                err
+            );
+            return null;
+        }
+    }
+
+    /**
+     * UTF-8-safe base64 decode for WebAPI webresource.content.
+     * Uses TextDecoder when available; falls back for older runtimes / Jest.
+     */
+    static decodeBase64Utf8(base64: string): string {
+        const binary = atob(base64);
+        if (typeof TextDecoder !== "undefined") {
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return new TextDecoder("utf-8").decode(bytes);
+        }
+        // Percent-encode each byte then decode as UTF-8
+        try {
+            let escaped = "";
+            for (let i = 0; i < binary.length; i++) {
+                escaped +=
+                    "%" + binary.charCodeAt(i).toString(16).padStart(2, "0");
+            }
+            return decodeURIComponent(escaped);
+        } catch {
+            return binary;
+        }
+    }
+
+    /**
+     * Primary load path: same-origin /WebResources/{name} (plain text).
+     * Works for form users without prvRead on the webresource table.
+     */
+    private async tryLoadConfigViaWebResourceUrl(
+        name: string
+    ): Promise<string | null> {
+        try {
+            const res = await fetch(
+                `/WebResources/${encodeURIComponent(name)}`,
+                { credentials: "same-origin", cache: "no-store" }
+            );
+            if (!res.ok) {
+                console.warn(
+                    `[FieldAuditHistory] /WebResources/${name} returned HTTP ${res.status}; trying WebAPI fallback.`
+                );
+                return null;
+            }
+            return await res.text();
+        } catch (err) {
+            console.warn(
+                `[FieldAuditHistory] /WebResources/${name} fetch failed; trying WebAPI fallback.`,
+                err
+            );
+            return null;
+        }
+    }
+
+    /**
+     * Fallback load path: WebAPI query on webresource + base64 content.
+     */
+    private async tryLoadConfigViaWebApi(
+        webAPI: ComponentFramework.WebApi,
+        name: string
+    ): Promise<string | null> {
+        try {
+            const result = await webAPI.retrieveMultipleRecords(
+                "webresource",
+                `?$filter=name eq '${name.replace(/'/g, "''")}'&$select=content`
+            );
+
+            if (result.entities.length === 0) {
+                return null;
+            }
+
+            const entity = result.entities[0] as { content?: unknown };
+            const content = entity.content;
+            if (typeof content !== "string" || content.length === 0) {
+                return null;
+            }
+
+            return DataverseService.decodeBase64Utf8(content);
+        } catch (err) {
+            console.warn(
+                `[FieldAuditHistory] WebAPI load of web resource '${name}' failed.`,
+                err
+            );
+            return null;
+        }
+    }
+
+    /**
      * Loads custom configuration from a Dataverse web resource.
      *
-     * The web resource is expected to contain a JavaScript variable assignment
-     * with a JSON object, e.g.:
-     *   var config = { audit: { defaultPageSize: 50 }, labels: { ... } };
+     * The web resource may contain pure JSON or a JS-style wrapper:
+     *   var config = { "audit": { "defaultPageSize": 50 }, "labels": { ... } };
      *
-     * The loader decodes the base64 content, extracts the JSON object using
-     * a regex, and merges it with DEFAULT_CONFIG (so partial overrides work).
+     * Content inside the braces must be valid JSON (double-quoted keys).
+     * Load order: /WebResources/{name} fetch first, then WebAPI base64 content.
+     * Partial overrides are deep-merged with DEFAULT_CONFIG.
      *
      * @param webAPI - PCF WebApi interface for querying web resources
-     * @param configName - Logical name of the web resource (e.g., "vp365_auditconfig")
+     * @param configName - Logical name of the web resource (e.g., "vp365_AuditHistoryConfig")
      * @returns Merged config (defaults + overrides)
      */
     async loadConfig(
         webAPI: ComponentFramework.WebApi,
         configName: string
     ): Promise<IAuditConfig> {
-        try {
-            const result = await webAPI.retrieveMultipleRecords(
-                "webresource",
-                `?$filter=name eq '${configName.replace(/'/g, "''")}'&$select=content`
+        const name = DataverseService.normalizeConfigWebResourceName(configName);
+        if (!name) {
+            console.warn(
+                "[FieldAuditHistory] Config web resource name is empty; using defaults."
             );
+            return DEFAULT_CONFIG;
+        }
 
-            if (result.entities.length === 0) {
+        try {
+            let text = await this.tryLoadConfigViaWebResourceUrl(name);
+            text ??= await this.tryLoadConfigViaWebApi(webAPI, name);
+
+            if (text == null) {
+                console.warn(
+                    `[FieldAuditHistory] Config web resource '${name}' not found; using defaults.`
+                );
                 return DEFAULT_CONFIG;
             }
 
-            // Web resource content is stored as base64 in Dataverse
-            const base64 = String(result.entities[0].content);
-            const decoded = atob(base64);
-
-            // Extract the JSON object using bounded search (no regex — avoids ReDoS)
-            const startIdx = decoded.indexOf("{");
-            const endIdx = decoded.lastIndexOf("}");
-
-            if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
+            const raw = DataverseService.parseConfigText(text);
+            if (!raw) {
                 return DEFAULT_CONFIG;
             }
 
-            const jsonStr = decoded.substring(startIdx, endIdx + 1);
-
-            // Parse, validate types, and deep-merge with defaults
-            const raw = JSON.parse(jsonStr) as Record<string, unknown>;
             const parsed = DataverseService.sanitizeConfig(raw);
             return DataverseService.deepMerge(DEFAULT_CONFIG, parsed);
-        } catch {
-            // If config loading fails, use defaults silently
+        } catch (err) {
+            console.warn(
+                "[FieldAuditHistory] Failed to load config; using defaults.",
+                err
+            );
             return DEFAULT_CONFIG;
         }
     }

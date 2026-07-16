@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.6] - 2026-07-16
+
+### Fixed
+- **Config parse with comment braces** — strip `//` / block comments and locate `var config = {` before JSON extraction so example braces in the web resource header no longer cause silent parse failure and defaults
+
+## [3.4.5] - 2026-07-16
+
+### Fixed
+- **Config web resource loading** — primary load via `/WebResources/{name}` (works for form users without WebAPI read on `webresource`), WebAPI base64 fallback, name trim/`.js` strip, UTF-8-safe decode, and `[FieldAuditHistory]` console warnings on failure
+- Auto-load solution default web resource `vp365_AuditHistoryConfig` when the form property is blank
+- Shipped `vp365_AuditHistoryConfig.js` and README examples now use valid JSON (double-quoted keys) so `JSON.parse` succeeds
+
 ## [3.4.4] - 2026-03-17
 
 ### Added

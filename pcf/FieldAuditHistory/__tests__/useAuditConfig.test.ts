@@ -2,7 +2,7 @@
 import { act } from "@testing-library/react";
 import { renderHook } from "./renderHook";
 import { useAuditConfig } from "../hooks/useAuditConfig";
-import { DEFAULT_CONFIG } from "../models/IConfig";
+import { DEFAULT_CONFIG, DEFAULT_CONFIG_WEB_RESOURCE } from "../models/IConfig";
 import { createMockContext, createMockService } from "./helpers";
 import { EntityContext } from "../hooks/loadAuditData";
 
@@ -52,7 +52,7 @@ describe("useAuditConfig", () => {
         expect(result.current.auditedFields).toEqual(new Set(["emailaddress1"]));
     });
 
-    it("should use DEFAULT_CONFIG when no configWebResourceName", async () => {
+    it("should auto-load DEFAULT_CONFIG_WEB_RESOURCE when property is blank", async () => {
         const mockContext = createMockContext();
         const service = createMockService();
 
@@ -67,8 +67,11 @@ describe("useAuditConfig", () => {
             await new Promise((resolve) => setTimeout(resolve, 10));
         });
 
-        // loadConfig should NOT have been called (configWebResourceName is null)
-        expect(service.loadConfig).not.toHaveBeenCalled();
+        // Blank/null property still loads the solution-shipped default name
+        expect(service.loadConfig).toHaveBeenCalledWith(
+            mockContext.webAPI,
+            DEFAULT_CONFIG_WEB_RESOURCE
+        );
     });
 
     it("should load config when configWebResourceName is provided", async () => {
@@ -90,6 +93,28 @@ describe("useAuditConfig", () => {
         expect(service.loadConfig).toHaveBeenCalledWith(
             mockContext.webAPI,
             "vp365_config"
+        );
+    });
+
+    it("should trim configWebResourceName before load", async () => {
+        const mockContext = createMockContext();
+        mockContext.parameters.configWebResourceName = { raw: "  custom_Config  " };
+        const service = createMockService();
+
+        await act(async () => {
+            renderHook(() =>
+                useAuditConfig(
+                    mockContext as unknown as Parameters<typeof useAuditConfig>[0],
+                    entityContext,
+                    service,
+                )
+            );
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        });
+
+        expect(service.loadConfig).toHaveBeenCalledWith(
+            mockContext.webAPI,
+            "custom_Config"
         );
     });
 

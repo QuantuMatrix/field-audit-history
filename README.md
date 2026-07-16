@@ -73,7 +73,9 @@ No per-field setup. The control reads entity metadata and auto-detects audited f
 
 ## Configuration
 
-Works out of the box. Customize via a JSON web resource (`vp365_AuditHistoryConfig`):
+Works out of the box. Customize via the solution web resource **`vp365_AuditHistoryConfig`** (auto-loaded when the control property is blank).
+
+**This is not a form library script.** The control fetches the file as text and `JSON.parse`s it. Content inside the braces must be **valid JSON** (double-quoted keys). Failures log to the browser console as `[FieldAuditHistory] …` and fall back to built-in defaults.
 
 | Mode | Behavior | Best For |
 |---|---|---|
@@ -83,29 +85,30 @@ Works out of the box. Customize via a JSON web resource (`vp365_AuditHistoryConf
 | `all` | Icons on every visible field | Compliance reviews |
 
 ```javascript
+// Comments only outside the object. Keys inside must be double-quoted.
 var config = {
-    tables: {
-        "*": { mode: "audited", fields: [] },
+    "tables": {
+        "*": { "mode": "audited", "fields": [] },
         "contact": {
-            mode: "include",
-            fields: ["emailaddress1", "telephone1", "jobtitle"]
+            "mode": "include",
+            "fields": ["emailaddress1", "telephone1", "jobtitle"]
         },
         "account": {
-            mode: "exclude",
-            fields: ["modifiedon", "modifiedby"]
+            "mode": "exclude",
+            "fields": ["modifiedon", "modifiedby"]
         }
     }
 };
 ```
 
-Config changes take effect on next form load - no re-import needed.
+Config changes take effect on next form load after **Publish** - no re-import needed.
 
 ## Control Properties
 
 | Property | Type | Required | Description |
 |---|---|---|---|
 | `boundField` | SingleLine.Text | Yes | Host field the control binds to. Not displayed - serves as anchor. |
-| `configWebResourceName` | SingleLine.Text | No | Logical name of JSON config web resource. Defaults apply if omitted. |
+| `configWebResourceName` | SingleLine.Text | No | Logical name of JSON config web resource. Defaults to `vp365_AuditHistoryConfig` when blank. |
 | `pageSize` | Whole.None | No | Audit entries per API page (1–1000). Default: 25. |
 
 ## Compatibility

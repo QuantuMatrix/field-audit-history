@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
   ============================================================================
-  ControlManifest.Input.xml — vp365.ai | Field Audit History (v3.4.4)
+  ControlManifest.Input.xml — vp365.ai | Field Audit History (v3.4.6)
   ============================================================================
 
   PURPOSE:
@@ -32,7 +32,7 @@
 <manifest>
   <control namespace="vp365"
            constructor="FieldAuditHistory"
-           version="3.4.4"
+           version="3.4.6"
            display-name-key="vp365.ai | Field Audit History"
            description-key="Injects audit history icons next to all audited fields on the form. Bind to a dedicated text field to activate."
            control-type="virtual">
@@ -71,7 +71,7 @@
     -->
     <property name="configWebResourceName"
               display-name-key="Config Web Resource"
-              description-key="Logical name of JSON config web resource (optional — defaults apply if omitted)"
+              description-key="Logical name of JSON config web resource (optional — defaults to vp365_AuditHistoryConfig when blank)"
               of-type="SingleLine.Text"
               usage="input"
               required="false" />

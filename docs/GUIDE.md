@@ -188,6 +188,10 @@ The export link is visible in the panel header:
 
 The control works out of the box with no configuration. Customize behavior via a JSON web resource named `vp365_AuditHistoryConfig`.
 
+The control **auto-loads** that web resource when the form property **Config Web Resource** is blank. You may set the property to override the name. Do **not** attach the file as a form library — it is fetched as text and parsed as JSON (never executed).
+
+**JSON rules:** keys and strings must use double quotes; no trailing commas; no comments inside the `{ ... }` block. Invalid JSON or a missing resource falls back to built-in defaults and logs `[FieldAuditHistory]` warnings in the browser console.
+
 ### Field Selection Modes
 
 | Mode | Behavior | Best For |
@@ -277,7 +281,7 @@ These are set in the form editor when binding the control to a host field.
 | Property | Type | Required | Description |
 |---|---|---|---|
 | `boundField` | SingleLine.Text | Yes | Host field the control binds to. Not displayed - serves as anchor. |
-| `configWebResourceName` | SingleLine.Text | No | Logical name of JSON config web resource. Defaults apply if omitted. |
+| `configWebResourceName` | SingleLine.Text | No | Logical name of JSON config web resource. Defaults to `vp365_AuditHistoryConfig` when blank. |
 | `pageSize` | Whole.None | No | Audit entries per API page (1-1000). Default: 25. |
 
 ---

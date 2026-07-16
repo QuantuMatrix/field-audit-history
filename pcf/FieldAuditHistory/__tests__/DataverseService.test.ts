@@ -265,11 +265,32 @@ describe("DataverseService", () => {
     // loadConfig
     // ========================================================================
     describe("loadConfig", () => {
-        const mockWebAPI = {
-            retrieveMultipleRecords: jest.fn(),
-        } as unknown as ComponentFramework.WebApi;
+        let mockWebAPI: ComponentFramework.WebApi;
+
+        beforeEach(() => {
+            mockWebAPI = {
+                retrieveMultipleRecords: jest.fn(),
+            } as unknown as ComponentFramework.WebApi;
+        });
+
+        /** Mock primary /WebResources fetch path with plain text body */
+        function mockWebResourceFetch(text: string, ok = true, status = 200): void {
+            (global.fetch as jest.Mock).mockResolvedValueOnce({
+                ok,
+                status,
+                statusText: ok ? "OK" : "Error",
+                text: () => Promise.resolve(text),
+                json: () => Promise.resolve({}),
+            });
+        }
+
+        /** Fail the primary fetch so WebAPI fallback is used */
+        function mockWebResourceFetchMiss(): void {
+            mockWebResourceFetch("", false, 404);
+        }
 
         it("should return DEFAULT_CONFIG when no web resource found", async () => {
+            mockWebResourceFetchMiss();
             (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockResolvedValue({
                 entities: [],
             });
@@ -279,7 +300,27 @@ describe("DataverseService", () => {
             expect(result).toEqual(DEFAULT_CONFIG);
         });
 
-        it("should deep-merge config from web resource", async () => {
+        it("should load and deep-merge config via /WebResources fetch (primary path)", async () => {
+            const configJs = 'var config = { "quickPeek": { "maxEntries": 5 } };';
+            mockWebResourceFetch(configJs);
+
+            const result = await service.loadConfig(mockWebAPI, "vp365_config");
+
+            expect(result.quickPeek.maxEntries).toBe(5);
+            expect(result.quickPeek.showUserFilter).toBe(true);
+            expect(result.audit.defaultPageSize).toBe(25);
+            // WebAPI should not be needed when fetch succeeds
+            // eslint-disable-next-line @typescript-eslint/unbound-method -- jest mock assertion
+            expect(mockWebAPI.retrieveMultipleRecords).not.toHaveBeenCalled();
+            expect(global.fetch).toHaveBeenCalledWith(
+                // eslint-disable-next-line @microsoft/power-apps/use-cached-webresource -- asserts production load URL
+                "/WebResources/vp365_config",
+                expect.objectContaining({ credentials: "same-origin" })
+            );
+        });
+
+        it("should deep-merge config from WebAPI when fetch misses", async () => {
+            mockWebResourceFetchMiss();
             const configJs = 'var config = { "quickPeek": { "maxEntries": 5 } };';
             const base64 = btoa(configJs);
 
@@ -290,24 +331,89 @@ describe("DataverseService", () => {
             const result = await service.loadConfig(mockWebAPI, "vp365_config");
 
             expect(result.quickPeek.maxEntries).toBe(5);
-            // Other defaults preserved
             expect(result.quickPeek.showUserFilter).toBe(true);
             expect(result.audit.defaultPageSize).toBe(25);
         });
 
-        it("should return DEFAULT_CONFIG on parse error", async () => {
-            const base64 = btoa("not valid js");
+        it("should strip .js extension and trim name before lookup", async () => {
+            mockWebResourceFetch('{ "quickPeek": { "maxEntries": 3 } }');
 
-            (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockResolvedValue({
-                entities: [{ content: base64 }],
-            });
+            await service.loadConfig(mockWebAPI, "  vp365_AuditHistoryConfig.js  ");
+
+            expect(global.fetch).toHaveBeenCalledWith(
+                // eslint-disable-next-line @microsoft/power-apps/use-cached-webresource -- asserts production load URL
+                "/WebResources/vp365_AuditHistoryConfig",
+                expect.any(Object)
+            );
+        });
+
+        it("should return DEFAULT_CONFIG for empty name after normalize", async () => {
+            const result = await service.loadConfig(mockWebAPI, "   ");
+            expect(result).toEqual(DEFAULT_CONFIG);
+            expect(global.fetch).not.toHaveBeenCalled();
+        });
+
+        it("should return DEFAULT_CONFIG on parse error", async () => {
+            mockWebResourceFetch("not valid js");
 
             const result = await service.loadConfig(mockWebAPI, "vp365_config");
 
             expect(result).toEqual(DEFAULT_CONFIG);
         });
 
-        it("should return DEFAULT_CONFIG on API error", async () => {
+        it("should return DEFAULT_CONFIG for unquoted JavaScript object keys", async () => {
+            // Shipped pre-fix samples used bare JS keys — invalid for JSON.parse
+            mockWebResourceFetch("var config = { quickPeek: { maxEntries: 5 } };");
+
+            const result = await service.loadConfig(mockWebAPI, "vp365_config");
+
+            expect(result).toEqual(DEFAULT_CONFIG);
+        });
+
+        it("should parse shipped-style file with braces inside header comments", async () => {
+            // Regression: first `{` used to be in // example comments, breaking JSON.parse
+            const shippedStyle = `
+// EXAMPLE (per-table overrides):
+//   "tables": {
+//       "*": { "mode": "audited", "fields": [] },
+//       "contact": { "mode": "include", "fields": ["emailaddress1"] }
+//   }
+// ============================================================================
+var config = {
+    "features": {
+        "allowRestore": false,
+        "allowCopy": false,
+        "allowExport": false
+    },
+    "quickPeek": {
+        "maxEntries": 3
+    }
+};
+`;
+            mockWebResourceFetch(shippedStyle);
+
+            const result = await service.loadConfig(mockWebAPI, "vp365_config");
+
+            expect(result.features.allowRestore).toBe(false);
+            expect(result.features.allowCopy).toBe(false);
+            expect(result.features.allowExport).toBe(false);
+            expect(result.quickPeek.maxEntries).toBe(3);
+        });
+
+        it("should parseConfigText directly for comment-heavy web resources", () => {
+            const text = `
+// tables: { mode: audited }
+var config = { "labels": { "statusLabel": "from-config" } };
+`;
+            const parsed = DataverseService.parseConfigText(text);
+            expect(parsed).not.toBeNull();
+            expect((parsed?.labels as { statusLabel?: string })?.statusLabel).toBe(
+                "from-config"
+            );
+        });
+
+        it("should return DEFAULT_CONFIG when both fetch and WebAPI fail", async () => {
+            mockWebResourceFetchMiss();
             (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockRejectedValue(
                 new Error("API Error")
             );
@@ -315,6 +421,33 @@ describe("DataverseService", () => {
             const result = await service.loadConfig(mockWebAPI, "vp365_config");
 
             expect(result).toEqual(DEFAULT_CONFIG);
+        });
+
+        it("should decode UTF-8 base64 content from WebAPI path", async () => {
+            mockWebResourceFetchMiss();
+            // "CONFIG" with a non-ASCII character in a label
+            const configJs =
+                'var config = { "labels": { "statusLabel": "Audit — loaded" } };';
+            const base64 = btoa(unescape(encodeURIComponent(configJs)));
+
+            (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockResolvedValue({
+                entities: [{ content: base64 }],
+            });
+
+            const result = await service.loadConfig(mockWebAPI, "vp365_config");
+
+            expect(result.labels.statusLabel).toBe("Audit — loaded");
+        });
+    });
+
+    describe("normalizeConfigWebResourceName", () => {
+        it("should trim and strip .js / .json", () => {
+            expect(DataverseService.normalizeConfigWebResourceName("  a.js  ")).toBe("a");
+            expect(DataverseService.normalizeConfigWebResourceName("b.JSON")).toBe("b");
+            expect(DataverseService.normalizeConfigWebResourceName("vp365_AuditHistoryConfig")).toBe(
+                "vp365_AuditHistoryConfig"
+            );
+            expect(DataverseService.normalizeConfigWebResourceName("")).toBe("");
         });
     });
 
@@ -409,11 +542,18 @@ describe("DataverseService", () => {
             retrieveMultipleRecords: jest.fn(),
         } as unknown as ComponentFramework.WebApi;
 
-        it("should handle config without assignment operator", async () => {
-            const base64 = btoa('{ "quickPeek": { "maxEntries": 5 } }');
-            (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockResolvedValue({
-                entities: [{ content: base64 }],
+        function mockWebResourceFetch(text: string): void {
+            (global.fetch as jest.Mock).mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                statusText: "OK",
+                text: () => Promise.resolve(text),
+                json: () => Promise.resolve({}),
             });
+        }
+
+        it("should handle config without assignment operator", async () => {
+            mockWebResourceFetch('{ "quickPeek": { "maxEntries": 5 } }');
 
             const result = await service.loadConfig(mockWebAPI, "vp365_config");
             // Direct JSON object should be parsed (indexOf '{' finds it)
@@ -422,20 +562,14 @@ describe("DataverseService", () => {
 
         it("should handle config with nested braces correctly", async () => {
             const configJs = 'var config = { "tables": { "*": { "mode": "audited", "fields": [] } } };';
-            const base64 = btoa(configJs);
-            (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockResolvedValue({
-                entities: [{ content: base64 }],
-            });
+            mockWebResourceFetch(configJs);
 
             const result = await service.loadConfig(mockWebAPI, "vp365_config");
             expect(result.tables["*"].mode).toBe("audited");
         });
 
         it("should return defaults for content with no JSON object", async () => {
-            const base64 = btoa("// just a comment, no JSON");
-            (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockResolvedValue({
-                entities: [{ content: base64 }],
-            });
+            mockWebResourceFetch("// just a comment, no JSON");
 
             const result = await service.loadConfig(mockWebAPI, "vp365_config");
             expect(result).toEqual(DEFAULT_CONFIG);
@@ -443,10 +577,7 @@ describe("DataverseService", () => {
 
         it("should strip non-numeric defaultPageSize from config", async () => {
             const configJs = 'var config = { "audit": { "defaultPageSize": "fifty" } };';
-            const base64 = btoa(configJs);
-            (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockResolvedValue({
-                entities: [{ content: base64 }],
-            });
+            mockWebResourceFetch(configJs);
 
             const result = await service.loadConfig(mockWebAPI, "vp365_config");
             // Invalid value stripped, default preserved
@@ -455,10 +586,7 @@ describe("DataverseService", () => {
 
         it("should strip non-numeric maxPages from config", async () => {
             const configJs = 'var config = { "audit": { "maxPages": true } };';
-            const base64 = btoa(configJs);
-            (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockResolvedValue({
-                entities: [{ content: base64 }],
-            });
+            mockWebResourceFetch(configJs);
 
             const result = await service.loadConfig(mockWebAPI, "vp365_config");
             expect(result.audit.maxPages).toBe(10);
@@ -466,10 +594,7 @@ describe("DataverseService", () => {
 
         it("should strip non-string panelWidth from config", async () => {
             const configJs = 'var config = { "display": { "panelWidth": 480 } };';
-            const base64 = btoa(configJs);
-            (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockResolvedValue({
-                entities: [{ content: base64 }],
-            });
+            mockWebResourceFetch(configJs);
 
             const result = await service.loadConfig(mockWebAPI, "vp365_config");
             expect(result.display.panelWidth).toBe("80%");
@@ -477,10 +602,7 @@ describe("DataverseService", () => {
 
         it("should accept valid numeric config overrides", async () => {
             const configJs = 'var config = { "audit": { "defaultPageSize": 50, "maxPages": 20 } };';
-            const base64 = btoa(configJs);
-            (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockResolvedValue({
-                entities: [{ content: base64 }],
-            });
+            mockWebResourceFetch(configJs);
 
             const result = await service.loadConfig(mockWebAPI, "vp365_config");
             expect(result.audit.defaultPageSize).toBe(50);
@@ -496,12 +618,19 @@ describe("DataverseService", () => {
             retrieveMultipleRecords: jest.fn(),
         } as unknown as ComponentFramework.WebApi;
 
+        function mockWebResourceFetch(text: string): void {
+            (global.fetch as jest.Mock).mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                statusText: "OK",
+                text: () => Promise.resolve(text),
+                json: () => Promise.resolve({}),
+            });
+        }
+
         it("should strip non-array visibleOperations", async () => {
             const configJs = 'var config = { "audit": { "visibleOperations": "1,2,3" } };';
-            const base64 = btoa(configJs);
-            (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockResolvedValue({
-                entities: [{ content: base64 }],
-            });
+            mockWebResourceFetch(configJs);
 
             const result = await service.loadConfig(mockWebAPI, "vp365_config");
             expect(result.audit.visibleOperations).toEqual([1, 2]); // default preserved
@@ -509,10 +638,7 @@ describe("DataverseService", () => {
 
         it("should strip non-numeric valuePreviewLength", async () => {
             const configJs = 'var config = { "display": { "valuePreviewLength": "long" } };';
-            const base64 = btoa(configJs);
-            (mockWebAPI.retrieveMultipleRecords as jest.Mock).mockResolvedValue({
-                entities: [{ content: base64 }],
-            });
+            mockWebResourceFetch(configJs);
 
             const result = await service.loadConfig(mockWebAPI, "vp365_config");
             expect(typeof result.display.valuePreviewLength).toBe("number");
@@ -585,6 +711,15 @@ describe("DataverseService", () => {
             const mockWebAPI = {
                 retrieveMultipleRecords: jest.fn().mockResolvedValue({ entities: [] }),
             } as unknown as ComponentFramework.WebApi;
+
+            // Primary fetch misses so WebAPI fallback runs
+            (global.fetch as jest.Mock).mockResolvedValueOnce({
+                ok: false,
+                status: 404,
+                statusText: "Error",
+                text: () => Promise.resolve(""),
+                json: () => Promise.resolve({}),
+            });
 
             await service.loadConfig(mockWebAPI, "'; DELETE FROM --");
             // Should still call retrieveMultipleRecords (no pre-validation on config name)

@@ -3,7 +3,13 @@
 import * as React from "react";
 import { IInputs } from "../generated/ManifestTypes";
 import { DataverseService } from "../services/DataverseService";
-import { IAuditConfig, ITableConfig, DEFAULT_CONFIG, AuditStatusKind } from "../models/IConfig";
+import {
+    IAuditConfig,
+    ITableConfig,
+    DEFAULT_CONFIG,
+    DEFAULT_CONFIG_WEB_RESOURCE,
+    AuditStatusKind,
+} from "../models/IConfig";
 import { EntityContext } from "./loadAuditData";
 
 export interface UseAuditConfigReturn {
@@ -50,12 +56,14 @@ export function useAuditConfig(
 
         void (async () => {
             try {
+                // Prefer the form property; otherwise load the solution-shipped default.
+                const rawName =
+                    context.parameters.configWebResourceName?.raw?.trim() ?? "";
                 const configName =
-                    context.parameters.configWebResourceName?.raw;
+                    rawName.length > 0 ? rawName : DEFAULT_CONFIG_WEB_RESOURCE;
+
                 const [loadedConfig, fields, orgEnabled, tableEnabled] = await Promise.all([
-                    configName
-                        ? service.loadConfig(context.webAPI, configName)
-                        : Promise.resolve(DEFAULT_CONFIG),
+                    service.loadConfig(context.webAPI, configName),
                     service.getAuditEnabledAttributes(
                         entityContext.entityTypeName
                     ),

@@ -1,6 +1,6 @@
 {
   "name": "field-audit-history",
-  "version": "3.4.4",
+  "version": "3.4.6",
   "description": "Inline audit trail for Dynamics 365 — see who changed what, right on the form.",
   "author": "Victoria Pechenizka <victoria@vp365.ai>",
   "license": "MIT",

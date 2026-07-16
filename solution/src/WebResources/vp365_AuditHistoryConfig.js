@@ -12,7 +12,16 @@
 // USAGE:
 //   1. Set the PCF control's "Config Web Resource" property to:
 //      vp365_AuditHistoryConfig
+//      (optional in recent builds — this name is auto-loaded when blank)
 //   2. Edit this file to override defaults.
+//   3. Save + Publish All Customizations, then hard-refresh the form.
+//
+// IMPORTANT — content inside the braces must be VALID JSON:
+//   - Every key double-quoted: "mode": "audited"
+//   - Double-quoted strings only (no single quotes)
+//   - No trailing commas
+//   - No // comments inside the { ... } block
+// The control JSON.parses this file; it does NOT execute it as JavaScript.
 //
 // MODES:
 //   "audited"  — show icons only on fields with auditing enabled (default)
@@ -21,10 +30,10 @@
 //   "all"      — show icons on ALL visible fields
 //
 // EXAMPLE (per-table overrides):
-//   tables: {
-//       "*": { mode: "audited", fields: [] },
-//       "contact": { mode: "include", fields: ["emailaddress1", "telephone1"] },
-//       "account": { mode: "exclude", fields: ["modifiedon", "modifiedby"] }
+//   "tables": {
+//       "*": { "mode": "audited", "fields": [] },
+//       "contact": { "mode": "include", "fields": ["emailaddress1", "telephone1"] },
+//       "account": { "mode": "exclude", "fields": ["modifiedon", "modifiedby"] }
 //   }
 //
 // INTERACTION:
@@ -33,20 +42,26 @@
 //   Quick Peek "View full history →" → opens Deep Dive for that field
 // ============================================================================
 var config = {
-    _version: "3.4.0",
-    features: {
-        allowRestore: true,
-        allowCopy: true,
-        allowExport: true
+    "_version": "3.4.0",
+    "features": {
+        "allowRestore": true,
+        "allowCopy": true,
+        "allowExport": true
     },
-    tables: {
+    "tables": {
         "*": {
-            mode: "audited",
-            fields: []
+            "mode": "audited",
+            "fields": []
         }
     },
-    quickPeek: {
-        maxEntries: 8,
-        showUserFilter: true
+    "quickPeek": {
+        "maxEntries": 8,
+        "showUserFilter": true
+    },
+    "display": {
+        "iconTooltip": "View audit history"
+    },
+    "labels": {
+        "statusLabel": "Audit tracking"
     }
 };
